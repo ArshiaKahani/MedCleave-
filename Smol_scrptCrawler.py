@@ -29,13 +29,16 @@ os.makedirs(faiss_dir, exist_ok=True)
 index_file = os.path.join(faiss_dir, "faiss_index.bin")
 save_interval = 10  # Interval to save the index in seconds
 
+# Delete the previous FAISS index file if it exists
+if os.path.exists(index_file):
+    os.remove(index_file)
+    print("Deleted previous FAISS index file.")
+
 # Initialize FAISS index, tokenizer, model
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 model = BertModel.from_pretrained('bert-base-uncased')
 dimension = 768  # Dimension of BERT embeddings
 
-# Set to track processed embeddings
-processed_embeddings = set()
 
 def load_faiss_index():
     if os.path.exists(index_file):
@@ -47,11 +50,14 @@ def load_faiss_index():
         save_faiss_index(index)  # Ensure the index file is created immediately
     return index
 
+
 def save_faiss_index(index):
     faiss.write_index(index, index_file)
     print("FAISS index saved.")
 
+
 index = load_faiss_index()
+
 
 # Function to get all PDF links from a webpage with retry mechanism
 @retry(stop_max_attempt_number=3, wait_fixed=2000)  # Retry up to 3 times with a 2-second wait between retries
@@ -81,6 +87,7 @@ def get_pdf_links(url, domain):
         print(f"Error accessing {url}: {e}")
     return pdf_links
 
+
 # Function to normalize and validate URLs
 def normalize_url(url, domain):
     parsed_url = urlparse(url)
@@ -90,6 +97,7 @@ def normalize_url(url, domain):
         return url
     return None
 
+
 # Function to recursively get all pages and collect PDF links with retry mechanism
 @retry(stop_max_attempt_number=3, wait_fixed=2000)  # Retry up to 3 times with a 2-second wait between retries
 def crawl_site(base_url, domain, depth=0, max_depth=3):
@@ -97,7 +105,6 @@ def crawl_site(base_url, domain, depth=0, max_depth=3):
     if depth > max_depth or base_url in visited_urls:
         return []
     visited_urls.add(base_url)
-    save_visited_urls()  # Save visited URLs to a file
 
     pdf_links = get_pdf_links(base_url, domain)
 
@@ -116,7 +123,7 @@ def crawl_site(base_url, domain, depth=0, max_depth=3):
                 links_to_crawl.append(normalized_url)
 
         with ThreadPoolExecutor(max_workers=500) as executor:
-            results = executor.map(lambda url: crawl_site(url, domain, depth+1, max_depth), links_to_crawl)
+            results = executor.map(lambda url: crawl_site(url, domain, depth + 1, max_depth), links_to_crawl)
             for result in results:
                 pdf_links.extend(result)
 
@@ -130,20 +137,6 @@ def crawl_site(base_url, domain, depth=0, max_depth=3):
 
     return pdf_links
 
-# Function to save visited URLs to a file
-def save_visited_urls():
-    with open('visited_urls.txt', 'w') as f:
-        for url in visited_urls:
-            f.write(url + '\n')
-
-# Function to load visited URLs from a file
-def load_visited_urls():
-    global visited_urls
-    try:
-        with open('visited_urls.txt', 'r') as f:
-            visited_urls = set(f.read().splitlines())
-    except FileNotFoundError:
-        visited_urls = set()
 
 # Function to download a PDF with retry mechanism
 @retry(stop_max_attempt_number=3, wait_fixed=2000)  # Retry up to 3 times with a 2-second wait between retries
@@ -164,6 +157,7 @@ def download_pdf(url, save_path):
     except requests.RequestException as e:
         print(f"Error downloading {url}: {e}")
 
+
 # Function to extract text from a PDF using PDFMiner.six with specified encoding
 def extract_text_from_pdf(pdf_path):
     text = ""
@@ -175,6 +169,7 @@ def extract_text_from_pdf(pdf_path):
         print(f"Error extracting text from {pdf_path}: {e}")
     return text
 
+
 # Function to convert text to BERT embeddings
 def convert_text_to_bert_embeddings(text, tokenizer, model):
     inputs = tokenizer(text, return_tensors='pt', max_length=512, truncation=True, padding=True)
@@ -185,9 +180,9 @@ def convert_text_to_bert_embeddings(text, tokenizer, model):
 
     return embeddings
 
+
 # Function to process PDFs and add their embeddings to the FAISS index
 def process_and_add_to_index(pdf_links):
-    global processed_embeddings
     last_save_time = time.time()
     for idx, pdf_url in enumerate(pdf_links):
         pdf_path = os.path.join(pdf_dir, f"document_{idx}.pdf")
@@ -195,24 +190,19 @@ def process_and_add_to_index(pdf_links):
         pdf_text = extract_text_from_pdf(pdf_path)
         if pdf_text:
             pdf_embedding = convert_text_to_bert_embeddings(pdf_text, tokenizer, model)
-            embedding_hash = hash(tuple(pdf_embedding))
-            if embedding_hash not in processed_embeddings:
-                index.add(np.expand_dims(pdf_embedding, axis=0))
-                processed_embeddings.add(embedding_hash)
+            index.add(np.expand_dims(pdf_embedding, axis=0))
 
         # Periodically save the FAISS index
         if time.time() - last_save_time > save_interval:
             save_faiss_index(index)
             last_save_time = time.time()
 
+
 # Main process
 def main():
     global total_urls_crawled, total_pdfs_crawled
     domain = 'https://www.ema.europa.eu'
     start_url = 'https://www.ema.europa.eu/en/homepage'
-
-    load_visited_urls()
-    load_faiss_index()
 
     try:
         pdf_links = crawl_site(start_url, domain)
@@ -223,8 +213,8 @@ def main():
     finally:
         # Final save of the index after processing all links or upon interruption
         save_faiss_index(index)
-        save_visited_urls()
         print("FAISS index updated and stored successfully.")
+
 
 if __name__ == "__main__":
     main()
