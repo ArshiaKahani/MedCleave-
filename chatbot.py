@@ -1,70 +1,51 @@
-import os
 import faiss
 import numpy as np
-from transformers import BertModel, BertTokenizer
+from transformers import AutoModel, AutoTokenizer
 import torch
 
-# Set environment variable to avoid OpenMP runtime conflicts (if necessary)
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+# Step 1: Load the model and tokenizer
+model_name = "ls-da3m0ns/bge_large_medical"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModel.from_pretrained(model_name)
 
-# Load FAISS index from binary file
-index = faiss.read_index('faiss_index.bin')
+# Step 2: Prepare example data (replace with your actual data)
+urls = ["crawled_urls.txt"]
 
-# Load BERT model and tokenizer
-model_name = 'bert-base-uncased'
-tokenizer = BertTokenizer.from_pretrained(model_name)
-model = BertModel.from_pretrained(model_name)
-model.eval()
+# Example embeddings (replace with actual embeddings)
+embeddings = np.random.rand(len(urls), 768)  # Replace with actual embeddings
+embeddings = embeddings / np.linalg.norm(embeddings, axis=1)[:, np.newaxis]  # Normalize embeddings
 
-def text_to_vector(text):
-    # Tokenize input text
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    # Generate BERT embeddings
+# Step 3: Build Faiss index
+index = faiss.IndexFlatIP(embeddings.shape[1])  # IP = Inner Product (for cosine similarity)
+index.add(embeddings.astype(np.float32))
+
+# Step 4: Define function for similarity search
+def search_similar(query_text, top_k=5):
+    # Tokenize and get embeddings for the query
+    inputs = tokenizer(query_text, return_tensors="pt")
     with torch.no_grad():
         outputs = model(**inputs)
-    # Extract the embeddings for [CLS] token (first token)
-    cls_embedding = outputs.last_hidden_state[:, 0, :].squeeze().numpy()
-    return cls_embedding
+        query_embedding = outputs.last_hidden_state.mean(dim=1).numpy()  # Mean pooling over tokens
 
-# Function to get user input
-def get_user_input():
-    texts = []
-    print("Enter text for similarity search (press Enter twice to finish):")
-    while True:
-        text = input("> ")
-        if text.strip() == "":
-            break
-        texts.append(text)
-    return texts
+    # Normalize query embedding
+    query_embedding = query_embedding / np.linalg.norm(query_embedding)
 
-# Example function to perform search
-def perform_search(texts, k):
-    # Convert texts to vectors
-    vectors = np.array([text_to_vector(text) for text in texts])
-    # Perform search using FAISS
-    D, I = index.search(vectors, k)
-    return D, I
+    # Search in Faiss index
+    query_embedding = query_embedding.reshape(1, -1).astype(np.float32)
+    _, idx = index.search(query_embedding, top_k)
 
-# Main function to run the program
-def main():
-    # Get user input
-    texts = get_user_input()
+    # Retrieve results
+    results = []
+    for i in range(top_k):
+        results.append((urls[idx[0][i]], np.dot(query_embedding[0], embeddings[idx[0][i]])))
 
-    if not texts:
-        print("No input provided. Exiting.")
-        return
+    return results
 
-    k = 3  # Number of nearest neighbors to retrieve
+# Step 5: Example usage
+query = "medical condition diagnosis"
+top_results = search_similar(query, top_k=5)
 
-    # Perform search for the provided texts
-    distances, indices = perform_search(texts, k)
-
-    # Output results
-    for i, text in enumerate(texts):
-        print(f"Text: '{text}'")
-        print(f"Indices of nearest neighbors: {indices[i]}")
-        print(f"Distances of nearest neighbors: {distances[i]}")
-        print("\n")
-
-if __name__ == "__main__":
-    main()
+# Step 6: Display results
+print(f"Top {len(top_results)} results for query: '{query}'")
+for rank, (url, distance) in enumerate(top_results, start=1):
+    print(f"Rank {rank}: URL - {url}, Similarity Score - {distance:.4f}")
