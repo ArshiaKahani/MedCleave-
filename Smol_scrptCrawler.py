@@ -1,10 +1,11 @@
 import requests
 from bs4 import BeautifulSoup
-from transformers import BertTokenizer, BertModel
+from transformers import AutoTokenizer, AutoModel
 import faiss
 import numpy as np
 import pickle
 import os
+import torch
 
 # Set environment variable to allow duplicate OpenMP libraries
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
@@ -44,9 +45,10 @@ def crawl_drugbank_urls(base_url, start_index, end_index, urls_file, contents_fi
 def get_bert_embeddings(texts, model, tokenizer):
     embeddings = []
     for i, text in enumerate(texts, 1):
-        print(f"Computing BERT embeddings for text {i} out of {len(texts)}")
+        print(f"Computing embeddings for text {i} out of {len(texts)}")
         inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True, max_length=512)
-        outputs = model(**inputs)
+        with torch.no_grad():
+            outputs = model(**inputs)
         embeddings.append(outputs.last_hidden_state.mean(dim=1).detach().numpy()[0])  # Use [0] to get the first token's embedding
     return embeddings
 
@@ -99,16 +101,16 @@ try:
     urls, contents = crawl_drugbank_urls(base_url, start_index, end_index, urls_file, contents_file)
     print("Crawling finished.")
 
-    # Load BERT model and tokenizer
+    # Load the medical BERT model and tokenizer
     print("Loading BERT model and tokenizer...")
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    model = BertModel.from_pretrained('bert-base-uncased')
+    tokenizer = AutoTokenizer.from_pretrained('ls-da3m0ns/bge_large_medical')
+    model = AutoModel.from_pretrained('ls-da3m0ns/bge_large_medical')
     print("BERT model and tokenizer loaded.")
 
-    # Get BERT embeddings
-    print("Computing BERT embeddings...")
+    # Get embeddings
+    print("Computing embeddings...")
     embeddings = get_bert_embeddings(contents, model, tokenizer)
-    print("BERT embeddings computed.")
+    print("Embeddings computed.")
 
     # Index embeddings with FAISS
     print("Indexing embeddings with FAISS...")
