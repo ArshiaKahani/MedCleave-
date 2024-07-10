@@ -23,6 +23,10 @@ embedding_tokenizer = AutoTokenizer.from_pretrained(embedding_model_name)
 embedding_model = AutoModel.from_pretrained(embedding_model_name)
 embedding_model.eval()  # Set model to evaluation mode
 
+# Move the embedding model to GPU
+device = torch.device("cuda")
+embedding_model.to(device)
+
 # Step 3: Load Faiss index
 index_file = "faiss_index.index"
 if os.path.exists(index_file):
@@ -55,10 +59,10 @@ if not os.path.exists(sample_embeddings_file):
 
     sample_embeddings = []
     for text in sample_texts:
-        inputs = embedding_tokenizer(text, return_tensors="pt")
+        inputs = embedding_tokenizer(text, return_tensors="pt").to(device)
         with torch.no_grad():
             outputs = embedding_model(**inputs)
-            embedding = outputs.last_hidden_state.mean(dim=1).numpy()
+            embedding = outputs.last_hidden_state.mean(dim=1).cpu().numpy()
             sample_embeddings.append(embedding)
 
     sample_embeddings = np.vstack(sample_embeddings)
@@ -68,10 +72,10 @@ else:
 
 # Step 6: Define function for similarity search
 def search_similar(query_text, top_k=3):
-    inputs = embedding_tokenizer(query_text, return_tensors="pt")
+    inputs = embedding_tokenizer(query_text, return_tensors="pt").to(device)
     with torch.no_grad():
         outputs = embedding_model(**inputs)
-        query_embedding = outputs.last_hidden_state.mean(dim=1).numpy()
+        query_embedding = outputs.last_hidden_state.mean(dim=1).cpu().numpy()
 
     query_embedding = query_embedding / np.linalg.norm(query_embedding)
     query_embedding = query_embedding.reshape(1, -1).astype(np.float32)
@@ -84,19 +88,19 @@ def search_similar(query_text, top_k=3):
 
     return results
 
-# Step 7: Function to extract content from URLs
-def extract_content(url):
+# Step 7: Function to extract content from URLs with dynamic query
+def extract_content(url, query):
     try:
         response = requests.get(url)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Example: Extracting relevant content
+        # Example: Extracting relevant content based on query
         paragraphs = soup.find_all('p')
         relevant_content = ""
         for para in paragraphs:
             text = para.get_text().strip()
-            if "leuprolide" in text.lower():  # Adjust condition based on your criteria
+            if query.lower() in text.lower():  # Adjust condition based on query
                 relevant_content += text + "\n"
 
         return relevant_content.strip()  # Return relevant content as a single string
@@ -106,34 +110,39 @@ def extract_content(url):
 
 # Step 8: Use the LangChain text generation pipeline for generating answers
 generation_model_name = "microsoft/Phi-3-mini-4k-instruct"
-text_generator = pipeline("text-generation", model=generation_model_name)
+text_generator = pipeline("text-generation", model=generation_model_name, device=0)
 
 # Step 9: Function to generate answer based on query and content
 def generate_answer(query, contents):
     answers = []
     prompt_template = PromptTemplate("""
-### Medical Assistant Context ###
+    
+    ### Medical Assistant Context ###
 As a helpful medical assistant, I'm here to assist you with your query.
 
 ### Medical Query ###
 Query: {query}
 
-### Related Information ###
-Content:
-{content}
+### Explanation ###
+{generated_text}
 
-### Generated Response ###
+### Revised Response ###
 Response: {generated_text}
 """)
 
     for content in contents:
         if content:
-            prompt = prompt_template.format(query=query, content=content, generated_text="Not Found.")
+            prompt = prompt_template.format(query=query, content=content, generated_text="")
             # Ensure prompt is wrapped in a list for text generation
             generated_texts = text_generator([prompt], max_new_tokens=200, num_return_sequences=1, truncation=True)
+            # Debugging: print the generated_texts object
+            #print(f"DEBUG: generated_texts: {generated_texts}")
             # Ensure generated_texts is a list and not None
             if generated_texts and isinstance(generated_texts, list) and len(generated_texts) > 0:
-                answers.append(generated_texts[0]["generated_text"])  # Accessing the first generated text
+                # Extract the response text only from the generated result
+                response = generated_texts[0][0]["generated_text"]
+                response_start = response.find("Response:") + len("Response:")
+                answers.append(response[response_start:].strip())
             else:
                 answers.append("No AI-generated text found.")
         else:
@@ -144,13 +153,14 @@ Response: {generated_text}
 def main():
     query = input("Enter your query: ")
     top_results = search_similar(query, top_k=3)
-    contents = [extract_content(url) for url in top_results]
+    contents = [extract_content(url, query) for url in top_results]
     answers = generate_answer(query, contents)
 
     print(f"Top {len(top_results)} results for query: '{query}'")
     for rank, url in enumerate(top_results, start=1):
         print(f"Rank {rank}: URL - {url}")
-        print(f"Answer based on content from {url}:\n{answers[rank-1]}\n")
+        print(f"Generated Answer:\n{answers[rank-1]}\n")
 
 if __name__ == "__main__":
-    main()
+    while True:
+        main()
