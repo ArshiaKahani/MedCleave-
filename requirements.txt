@@ -1,0 +1,7 @@
+faiss-cpu
+numpy
+torch
+transformers
+requests
+beautifulsoup4
+gradio

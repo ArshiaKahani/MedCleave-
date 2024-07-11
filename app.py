@@ -5,6 +5,8 @@ from transformers import AutoModel, AutoTokenizer, pipeline
 import requests
 from bs4 import BeautifulSoup
 import os
+import gradio as gr
+
 
 # Step 1: Define PromptTemplate class using LangChain's format
 class PromptTemplate:
@@ -16,6 +18,7 @@ class PromptTemplate:
         for key, value in kwargs.items():
             formatted_text = formatted_text.replace("{" + key + "}", str(value))
         return formatted_text
+
 
 # Step 2: Load embedding model and tokenizer
 embedding_model_name = "ls-da3m0ns/bge_large_medical"
@@ -70,6 +73,7 @@ if not os.path.exists(sample_embeddings_file):
 else:
     sample_embeddings = np.load(sample_embeddings_file)
 
+
 # Step 6: Define function for similarity search
 def search_similar(query_text, top_k=3):
     inputs = embedding_tokenizer(query_text, return_tensors="pt").to(device)
@@ -88,8 +92,9 @@ def search_similar(query_text, top_k=3):
 
     return results
 
-# Step 7: Function to extract content from URLs with dynamic query
-def extract_content(url, query):
+
+# Step 7: Function to extract content from URLs
+def extract_content(url):
     try:
         response = requests.get(url)
         response.raise_for_status()
@@ -99,18 +104,18 @@ def extract_content(url, query):
         paragraphs = soup.find_all('p')
         relevant_content = ""
         for para in paragraphs:
-            text = para.get_text().strip()
-            if query.lower() in text.lower():  # Adjust condition based on query
-                relevant_content += text + "\n"
+            relevant_content += para.get_text().strip()
 
         return relevant_content.strip()  # Return relevant content as a single string
     except requests.RequestException as e:
         print(f"Error fetching content from {url}: {e}")
         return ""
 
+
 # Step 8: Use the LangChain text generation pipeline for generating answers
 generation_model_name = "microsoft/Phi-3-mini-4k-instruct"
 text_generator = pipeline("text-generation", model=generation_model_name, device=0)
+
 
 # Step 9: Function to generate answer based on query and content
 def generate_answer(query, contents):
@@ -135,8 +140,7 @@ Response: {generated_text}
             prompt = prompt_template.format(query=query, content=content, generated_text="")
             # Ensure prompt is wrapped in a list for text generation
             generated_texts = text_generator([prompt], max_new_tokens=200, num_return_sequences=1, truncation=True)
-            # Debugging: print the generated_texts object
-            #print(f"DEBUG: generated_texts: {generated_texts}")
+
             # Ensure generated_texts is a list and not None
             if generated_texts and isinstance(generated_texts, list) and len(generated_texts) > 0:
                 # Extract the response text only from the generated result
@@ -149,18 +153,31 @@ Response: {generated_text}
             answers.append("No content available to generate an answer.")
     return answers
 
-# Step 10: Main function to execute the workflow
-def main():
-    query = input("Enter your query: ")
-    top_results = search_similar(query, top_k=3)
-    contents = [extract_content(url, query) for url in top_results]
-    answers = generate_answer(query, contents)
 
-    print(f"Top {len(top_results)} results for query: '{query}'")
-    for rank, url in enumerate(top_results, start=1):
-        print(f"Rank {rank}: URL - {url}")
-        print(f"Generated Answer:\n{answers[rank-1]}\n")
+# Gradio interface
+def process_query(query):
+    top_results = search_similar(query, top_k=3)
+    if top_results:
+        content = extract_content(top_results[0])
+        answer = generate_answer(query, [content])[0]
+
+        response = f"Rank 1: URL - {top_results[0]}\n"
+        response += f"Generated Answer:\n{answer}\n"
+
+        similar_urls = "\n".join(top_results[1:])  # The second and third URLs as similar URLs
+        return response, similar_urls
+    else:
+        return "No results found.", "No similar URLs found."
+
+
+demo = gr.Interface(
+    fn=process_query,
+    inputs=gr.Textbox(label="Enter your query"),
+    outputs=[
+        gr.Textbox(label="Generated Answer"),
+        gr.Textbox(label="Similar URLs")
+    ]
+)
 
 if __name__ == "__main__":
-    while True:
-        main()
+    demo.launch(share=True)
