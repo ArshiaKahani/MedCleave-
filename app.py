@@ -7,7 +7,6 @@ from bs4 import BeautifulSoup
 import os
 import gradio as gr
 
-
 # Step 1: Define PromptTemplate class using LangChain's format
 class PromptTemplate:
     def __init__(self, template):
@@ -19,7 +18,6 @@ class PromptTemplate:
             formatted_text = formatted_text.replace("{" + key + "}", str(value))
         return formatted_text
 
-
 # Step 2: Load embedding model and tokenizer
 embedding_model_name = "ls-da3m0ns/bge_large_medical"
 embedding_tokenizer = AutoTokenizer.from_pretrained(embedding_model_name)
@@ -27,7 +25,7 @@ embedding_model = AutoModel.from_pretrained(embedding_model_name)
 embedding_model.eval()  # Set model to evaluation mode
 
 # Move the embedding model to GPU
-device = torch.device("cuda")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 embedding_model.to(device)
 
 # Step 3: Load Faiss index
@@ -73,7 +71,6 @@ if not os.path.exists(sample_embeddings_file):
 else:
     sample_embeddings = np.load(sample_embeddings_file)
 
-
 # Step 6: Define function for similarity search
 def search_similar(query_text, top_k=3):
     inputs = embedding_tokenizer(query_text, return_tensors="pt").to(device)
@@ -91,7 +88,6 @@ def search_similar(query_text, top_k=3):
         results.append(urls[key])  # Return URLs only for simplicity
 
     return results
-
 
 # Step 7: Function to extract content from URLs
 def extract_content(url):
@@ -111,11 +107,9 @@ def extract_content(url):
         print(f"Error fetching content from {url}: {e}")
         return ""
 
-
 # Step 8: Use the LangChain text generation pipeline for generating answers
 generation_model_name = "microsoft/Phi-3-mini-4k-instruct"
 text_generator = pipeline("text-generation", model=generation_model_name, device=0)
-
 
 # Step 9: Function to generate answer based on query and content
 def generate_answer(query, contents):
@@ -140,7 +134,8 @@ Response: {generated_text}
             prompt = prompt_template.format(query=query, content=content, generated_text="")
             # Ensure prompt is wrapped in a list for text generation
             generated_texts = text_generator([prompt], max_new_tokens=200, num_return_sequences=1, truncation=True)
-
+            # Debugging: print the generated_texts object
+            #print(f"DEBUG: generated_texts: {generated_texts}")
             # Ensure generated_texts is a list and not None
             if generated_texts and isinstance(generated_texts, list) and len(generated_texts) > 0:
                 # Extract the response text only from the generated result
@@ -152,7 +147,6 @@ Response: {generated_text}
         else:
             answers.append("No content available to generate an answer.")
     return answers
-
 
 # Gradio interface
 def process_query(query):
@@ -168,7 +162,6 @@ def process_query(query):
         return response, similar_urls
     else:
         return "No results found.", "No similar URLs found."
-
 
 demo = gr.Interface(
     fn=process_query,
